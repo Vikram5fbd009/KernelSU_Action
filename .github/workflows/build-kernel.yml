@@ -36,9 +36,8 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
 
-      # ---- All KSU/SUSFS features disabled ----
-      # BakaSU is manually integrated in the tree, so we don't want
-      # scripts/kernelsu.sh or patches.sh to overwrite it.
+      # ---- Locks: config.env ke resukisu/auto ko override ----
+      # BakaSU manually integrated hai, inhe CI pe apply nahi karna.
       IN_KSU_VARIANT: none
       IN_KSU_REF: ""
       IN_KSU_HOOK_MODE: none
@@ -47,7 +46,7 @@ jobs:
       IN_ENABLE_KPM: "false"
       IN_EXTRA_DEFCONFIG: ""
 
-      # Only this one stays user-configurable from the UI.
+      # ---- User-controllable (workflow input) ----
       IN_ENABLE_HIDE_STUFF: ${{ inputs.hide_stuff }}
 
     steps:
