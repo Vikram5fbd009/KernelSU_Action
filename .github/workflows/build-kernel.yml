@@ -90,12 +90,20 @@ jobs:
       - name: Fetch kernel source
         run: bash scripts/source.sh
 
+      # 🔥 NAYA STEP: Xiaomi ke missing vendor files ko bypass karne ke liye 🔥
+      - name: Fix Xiaomi missing vendor files
+        run: |
+          cd kernel_workspace/android-kernel
+          mkdir -p vendor/xiaomi/kernel_modules/mihw/millet
+          echo "obj-y += dummy.o" > vendor/xiaomi/kernel_modules/mihw/millet/Makefile
+          touch vendor/xiaomi/kernel_modules/mihw/millet/dummy.c
+
       - name: Install KernelSU
         if: env.KSU_VARIANT != 'none'
         run: bash scripts/kernelsu.sh
 
       - name: Apply kernel patches
-        run: bash scripts/patches.sh all
+        run: bash scripts/patch.sh all || bash scripts/patches.sh all
 
       - name: Set up ccache
         if: env.ENABLE_CCACHE == 'true'
