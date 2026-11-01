@@ -2,94 +2,23 @@ name: Build Kernel
 
 on:
   workflow_dispatch:
-    # GitHub allows at most 10 workflow_dispatch inputs, so these are the knobs
-    # worth changing per-run. Everything else lives in the config file selected
-    # by `config`, so a fork can keep one profile per device.
     inputs:
-      config:
-        description: "Config file to build (path, relative to the repo root)"
-        required: false
-        default: "config.env"
-        type: string
-      # "config" on the options below means "use whatever the config file says".
-      # It is the default so that running the form without touching anything
-      # reproduces exactly what your profile describes.
-      ksu_variant:
-        description: "KernelSU variant"
-        required: false
-        default: "config"
-        type: choice
-        options:
-          - config
-          - none
-          - kernelsu
-          - kernelsu-next
-          - sukisu-ultra
-          - resukisu
-          - rsuntk
-          - backslashxx
-      ksu_ref:
-        description: "KernelSU branch/tag/commit (blank = best default for your kernel)"
-        required: false
-        default: ""
-        type: string
-      hook_mode:
-        description: "Syscall hook mechanism"
-        required: false
-        default: "config"
-        type: choice
-        options: [config, auto, kprobes, manual, tracepoint, syscall, none]
-      susfs:
-        description: "Apply SUSFS (mount/root hiding)"
-        required: false
-        default: "config"
-        type: choice
-        options: [config, "true", "false"]
-      path_umount:
-        description: "Backport path_umount() (needed on kernels older than 5.9)"
-        required: false
-        default: "config"
-        type: choice
-        options: [config, "true", "false"]
       hide_stuff:
         description: "Apply hide_stuff (extra fingerprint removal)"
         required: false
-        default: "config"
+        default: "false"
         type: choice
-        options: [config, "true", "false"]
-      kpm:
-        description: "Enable KPM (SukiSU-Ultra only)"
-        required: false
-        default: "config"
-        type: choice
-        options: [config, "true", "false"]
-      extra_defconfig:
-        description: "Extra defconfig lines, space separated (e.g. CONFIG_TMPFS_XATTR=y)"
-        required: false
-        default: ""
-        type: string
-      publish_release:
-        description: "Publish the build as a GitHub Release"
-        required: false
-        default: false
-        type: boolean
+        options: ["true", "false"]
 
   workflow_call:
     inputs:
-      config:          { required: false, default: "config.env", type: string }
-      ksu_variant:     { required: false, default: "config",     type: string }
-      ksu_ref:         { required: false, default: "",           type: string }
-      hook_mode:       { required: false, default: "config",     type: string }
-      susfs:           { required: false, default: "config",     type: string }
-      path_umount:     { required: false, default: "config",     type: string }
-      hide_stuff:      { required: false, default: "config",     type: string }
-      kpm:             { required: false, default: "config",     type: string }
-      extra_defconfig: { required: false, default: "",           type: string }
-      publish_release: { required: false, default: false,        type: boolean }
+      hide_stuff:
+        required: false
+        default: "false"
+        type: string
 
-# Only one build per ref at a time; a newer run supersedes an older one.
 concurrency:
-  group: build-kernel-${{ github.ref }}-${{ inputs.config }}
+  group: build-kernel-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -97,32 +26,29 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ inputs.config }}
+    name: Build kernel
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    outputs:
-      device: ${{ steps.meta.outputs.device }}
-      build_time: ${{ steps.meta.outputs.build_time }}
-      ksu_name: ${{ steps.meta.outputs.ksu_name }}
-      ksu_version: ${{ steps.meta.outputs.ksu_version }}
-      kernel_release: ${{ steps.meta.outputs.kernel_release }}
-      susfs_version: ${{ steps.meta.outputs.susfs_version }}
     env:
       WORKSPACE: ${{ github.workspace }}/kernel_workspace
-      CONFIG_ENV: ${{ inputs.config }}
+      CONFIG_ENV: config.env
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
 
-      # workflow inputs -> IN_* overrides consumed by scripts/config.sh
-      IN_KSU_VARIANT: ${{ inputs.ksu_variant }}
-      IN_KSU_REF: ${{ inputs.ksu_ref }}
-      IN_KSU_HOOK_MODE: ${{ inputs.hook_mode }}
-      IN_ENABLE_SUSFS: ${{ inputs.susfs }}
-      IN_ENABLE_PATH_UMOUNT: ${{ inputs.path_umount }}
+      # ---- All KSU/SUSFS features disabled ----
+      # BakaSU is manually integrated in the tree, so we don't want
+      # scripts/kernelsu.sh or patches.sh to overwrite it.
+      IN_KSU_VARIANT: none
+      IN_KSU_REF: ""
+      IN_KSU_HOOK_MODE: none
+      IN_ENABLE_SUSFS: "false"
+      IN_ENABLE_PATH_UMOUNT: "false"
+      IN_ENABLE_KPM: "false"
+      IN_EXTRA_DEFCONFIG: ""
+
+      # Only this one stays user-configurable from the UI.
       IN_ENABLE_HIDE_STUFF: ${{ inputs.hide_stuff }}
-      IN_ENABLE_KPM: ${{ inputs.kpm }}
-      IN_EXTRA_DEFCONFIG: ${{ inputs.extra_defconfig }}
 
     steps:
       - uses: actions/checkout@v4
@@ -144,8 +70,6 @@ jobs:
 
       - name: Add swap space
         run: |
-          # LTO links are memory-hungry and the runner has 16GB; a swap file is
-          # cheaper and more predictable than an unpinned third-party action.
           sudo fallocate -l 8G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
@@ -155,10 +79,6 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          # Kept deliberately lean. The historical list here was copied from the
-          # full AOSP platform build docs and pulled in ~40 packages a kernel
-          # build never touches, several of which no longer exist on current
-          # Ubuntu (python2, lib32ncurses5-dev, ...).
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl device-tree-compiler flex \
             git libelf-dev libssl-dev lz4 make python3 rsync unzip zip zstd \
@@ -191,18 +111,6 @@ jobs:
       - name: Package artifacts
         run: bash scripts/package.sh all
 
-      - name: Export build metadata
-        id: meta
-        run: |
-          {
-            echo "device=${DEVICE}"
-            echo "build_time=${BUILD_TIME}"
-            echo "ksu_name=${KSU_NAME:-none}"
-            echo "ksu_version=${KSU_VERSION_LABEL:-}"
-            echo "kernel_release=${KERNEL_RELEASE:-}"
-            echo "susfs_version=${SUSFS_VERSION:-}"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Upload kernel image
         uses: actions/upload-artifact@v4
         with:
@@ -230,49 +138,3 @@ jobs:
         with:
           name: boot${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
           path: kernel_workspace/boot.img
-
-  # Publishing is a separate job so the build itself runs with a read-only
-  # token; only this job gets contents:write, and only when asked for.
-  release:
-    name: Publish release
-    needs: build
-    if: inputs.publish_release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: false
-
-      - name: Package AnyKernel3 as a flashable zip
-        run: |
-          mkdir -p release
-          shopt -s nullglob
-          for dir in artifacts/AnyKernel3*/; do
-            name=$(basename "${dir%/}")
-            (cd "$dir" && zip -qr9 "${GITHUB_WORKSPACE}/release/${name}.zip" .)
-            echo "packed ${name}.zip"
-          done
-          for f in artifacts/*/Image* artifacts/*/boot.img artifacts/*/dtbo.img; do
-            [ -f "$f" ] && cp "$f" release/
-          done
-          ls -la release/
-
-      - name: Create release
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
-        with:
-          tag_name: ${{ needs.build.outputs.device }}-${{ needs.build.outputs.build_time }}
-          name: ${{ needs.build.outputs.device }} · ${{ needs.build.outputs.ksu_name }} · ${{ needs.build.outputs.build_time }}
-          body: |
-            | | |
-            | --- | --- |
-            | Device | `${{ needs.build.outputs.device }}` |
-            | Kernel | `${{ needs.build.outputs.kernel_release }}` |
-            | KernelSU | `${{ needs.build.outputs.ksu_name }}` @ `${{ needs.build.outputs.ksu_version }}` |
-            | SUSFS | `${{ needs.build.outputs.susfs_version || 'not applied' }}` |
-
-            Flash the AnyKernel3 zip from a custom recovery.
-          files: release/*
